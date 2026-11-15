@@ -1,0 +1,255 @@
+
+@page "/members"
+@rendermode InteractiveServer
+@using LibraryManagement_Alimbek.Models
+@using LibraryManagement_Alimbek.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<LibraryDbContext> DbFactory
+
+<PageTitle>Members Management</PageTitle>
+
+<h1>Members Management</h1>
+<p class="text-muted">Register and manage library members.</p>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">
+        @message
+    </div>
+}
+
+<div class="card shadow-sm p-4 mb-4">
+    <h4>@(editingId == 0 ? "Register New Member" : "Edit Member")</h4>
+
+    <EditForm Model="memberForm" OnValidSubmit="SaveMember"
+              FormName="memberForm" @key="memberForm">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Full Name</label>
+                <InputText class="form-control"
+                           @bind-Value="memberForm.FullName" />
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label">Email</label>
+                <InputText class="form-control"
+                           @bind-Value="memberForm.Email" />
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label">Phone Number</label>
+                <InputText class="form-control"
+                           @bind-Value="memberForm.Phone" />
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <button type="submit" class="btn btn-primary">
+                @(editingId == 0 ? "Register Member" : "Save Changes")
+            </button>
+
+            @if (editingId != 0)
+            {
+                <button type="button" class="btn btn-secondary ms-2"
+                        @onclick="CancelEdit">
+                    Cancel
+                </button>
+            }
+        </div>
+    </EditForm>
+</div>
+
+<div class="card shadow-sm p-4">
+    <h4>Registered Members (@filteredMembers.Count)</h4>
+
+    <input class="form-control mb-3"
+           placeholder="Search by name, email or phone..."
+           @bind="searchText"
+           @bind:event="oninput" />
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Full Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Joined</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var member in filteredMembers)
+                {
+                    <tr>
+                        <td>@member.FullName</td>
+                        <td>@member.Email</td>
+                        <td>@member.Phone</td>
+                        <td>@member.JoinedDate.ToString("dd.MM.yyyy")</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary me-2"
+                                    @onclick="() => EditMember(member)">
+                                Edit
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger"
+                                    @onclick="() => DeleteMember(member.Id)">
+                                Delete
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (filteredMembers.Count == 0)
+    {
+        <p class="text-muted">No members found.</p>
+    }
+</div>
+
+@code {
+    private List<Member> members = new();
+    private Member memberForm = new();
+    private string searchText = "";
+    private string message = "";
+    private bool isError;
+    private int editingId;
+
+    private List<Member> filteredMembers =>
+        members.Where(m =>
+            m.FullName.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+            m.Email.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+            m.Phone.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMembers();
+    }
+
+    private async Task LoadMembers()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        members = await db.Members
+            .AsNoTracking()
+            .OrderBy(m => m.FullName)
+            .ToListAsync();
+    }
+
+    private async Task SaveMember()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            bool emailExists = await db.Members.AnyAsync(m =>
+                m.Email == memberForm.Email && m.Id != editingId);
+
+            if (emailExists)
+            {
+                ShowMessage("This email is already registered.", true);
+                return;
+            }
+
+            if (editingId == 0)
+            {
+                db.Members.Add(memberForm);
+                await db.SaveChangesAsync();
+                ShowMessage("Member registered successfully!", false);
+            }
+            else
+            {
+                var existing = await db.Members.FindAsync(editingId);
+
+                if (existing == null)
+                {
+                    ShowMessage("Member not found.", true);
+                    return;
+                }
+
+                existing.FullName = memberForm.FullName;
+                existing.Email = memberForm.Email;
+                existing.Phone = memberForm.Phone;
+
+                await db.SaveChangesAsync();
+                ShowMessage("Member updated successfully!", false);
+            }
+
+            CancelEdit();
+            await LoadMembers();
+        }
+        catch (DbUpdateException)
+        {
+            ShowMessage("Could not save member. Check the email address.", true);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Error: {ex.Message}", true);
+        }
+    }
+
+    private void EditMember(Member member)
+    {
+        editingId = member.Id;
+
+        memberForm = new Member
+        {
+            Id = member.Id,
+            FullName = member.FullName,
+            Email = member.Email,
+            Phone = member.Phone,
+            JoinedDate = member.JoinedDate
+        };
+
+        message = "";
+    }
+
+    private async Task DeleteMember(int id)
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            bool hasLoans = await db.Loans.AnyAsync(l => l.MemberId == id);
+
+            if (hasLoans)
+            {
+                ShowMessage(
+                    "Cannot delete a member with loan history.", true);
+                return;
+            }
+
+            var member = await db.Members.FindAsync(id);
+
+            if (member == null)
+                return;
+
+            db.Members.Remove(member);
+            await db.SaveChangesAsync();
+
+            ShowMessage("Member deleted successfully!", false);
+            await LoadMembers();
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Error: {ex.Message}", true);
+        }
+    }
+
+    private void CancelEdit()
+    {
+        editingId = 0;
+        memberForm = new Member();
+    }
+
+    private void ShowMessage(string text, bool error)
+    {
+        message = text;
+        isError = error;
+    }
+}

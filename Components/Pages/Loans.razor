@@ -1,0 +1,224 @@
+
+@page "/loans"
+@rendermode InteractiveServer
+@using LibraryManagement_Alimbek.Models
+@using LibraryManagement_Alimbek.Data
+@using LibraryManagement_Alimbek.Services
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<LibraryDbContext> DbFactory
+@inject LibraryService LibraryService
+
+<PageTitle>Borrow & Return</PageTitle>
+
+<h1>Borrow & Return</h1>
+<p class="text-muted">Manage book borrowing and returns.</p>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">
+        @message
+    </div>
+}
+
+<div class="card shadow-sm p-4 mb-4">
+    <h4>Issue a Book</h4>
+
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">Select Book</label>
+            <select class="form-select" @bind="selectedBookId">
+                <option value="0">-- Select Book --</option>
+                @foreach (var book in books.Where(b => b.AvailableQuantity > 0))
+                {
+                    <option value="@book.Id">
+                        @book.Title (@book.AvailableQuantity available)
+                    </option>
+                }
+            </select>
+        </div>
+
+        <div class="col-md-4">
+            <label class="form-label">Select Member</label>
+            <select class="form-select" @bind="selectedMemberId">
+                <option value="0">-- Select Member --</option>
+                @foreach (var member in members)
+                {
+                    <option value="@member.Id">@member.FullName</option>
+                }
+            </select>
+        </div>
+
+        <div class="col-md-4">
+            <label class="form-label">Due Date</label>
+            <InputDate class="form-control" @bind-Value="dueDate" />
+        </div>
+    </div>
+
+    <button class="btn btn-primary mt-3"
+            disabled="@busy"
+            @onclick="BorrowBook">
+        Issue Book
+    </button>
+</div>
+
+<div class="card shadow-sm p-4">
+    <h4>Loan Records (@loans.Count)</h4>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Book</th>
+                    <th>Member</th>
+                    <th>Borrowed</th>
+                    <th>Due Date</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var loan in loans)
+                {
+                    <tr>
+                        <td>@loan.Book?.Title</td>
+                        <td>@loan.Member?.FullName</td>
+                        <td>@loan.BorrowDate.ToString("dd.MM.yyyy")</td>
+                        <td>@loan.DueDate.ToString("dd.MM.yyyy")</td>
+                        <td>
+                            @if (loan.IsReturned)
+                            {
+                                <span class="badge bg-success">Returned</span>
+                            }
+                            else if (loan.IsOverdue)
+                            {
+                                <span class="badge bg-danger">Overdue</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning text-dark">Borrowed</span>
+                            }
+                        </td>
+                        <td>
+                            @if (!loan.IsReturned)
+                            {
+                                <button class="btn btn-sm btn-outline-success"
+                                        disabled="@busy"
+                                        @onclick="() => ReturnBook(loan.Id)">
+                                    Return
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="text-muted">Completed</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (loans.Count == 0)
+    {
+        <p class="text-muted">No loan records yet.</p>
+    }
+</div>
+
+@code {
+    private List<Book> books = new();
+    private List<Member> members = new();
+    private List<Loan> loans = new();
+
+    private int selectedBookId;
+    private int selectedMemberId;
+    private DateTime dueDate = DateTime.Today.AddDays(14);
+    private string message = "";
+    private bool isError;
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        books = await db.Books.AsNoTracking()
+            .OrderBy(b => b.Title).ToListAsync();
+
+        members = await db.Members.AsNoTracking()
+            .OrderBy(m => m.FullName).ToListAsync();
+
+        loans = await db.Loans.AsNoTracking()
+            .Include(l => l.Book)
+            .Include(l => l.Member)
+            .OrderByDescending(l => l.BorrowDate)
+            .ThenByDescending(l => l.Id)
+            .ToListAsync();
+    }
+
+    private async Task BorrowBook()
+    {
+        if (busy) return;
+
+        busy = true;
+
+        try
+        {
+            var result = await LibraryService.BorrowBookAsync(
+                selectedBookId, selectedMemberId, dueDate);
+
+            ShowMessage(result.Message, !result.Success);
+
+            if (result.Success)
+            {
+                selectedBookId = 0;
+                selectedMemberId = 0;
+                dueDate = DateTime.Today.AddDays(14);
+
+                await LoadData();
+            }
+        }
+        catch (Exception)
+        {
+            ShowMessage("Unable to issue book. Please try again.", true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ReturnBook(int loanId)
+    {
+        if (busy) return;
+
+        busy = true;
+
+        try
+        {
+            var result = await LibraryService.ReturnBookAsync(loanId);
+
+            ShowMessage(result.Message, !result.Success);
+
+            if (result.Success)
+                await LoadData();
+        }
+        catch (Exception)
+        {
+            ShowMessage("Unable to return book. Please try again.", true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ShowMessage(string text, bool error)
+    {
+        message = text;
+        isError = error;
+    }
+}

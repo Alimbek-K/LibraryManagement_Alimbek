@@ -1,0 +1,25 @@
+
+# Build files
+bin/
+obj/
+.vs/
+.vscode/
+
+# Local database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# User-specific files
+*.user
+*.suo
+
+# Logs
+*.log
+
+# Environment and secrets
+.env
+.env.*
+appsettings.Development.json

@@ -1,0 +1,199 @@
+﻿
+@page "/"
+@using LibraryManagement_Alimbek.Data
+@using LibraryManagement_Alimbek.Models
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<LibraryDbContext> DbFactory
+
+<PageTitle>Library Dashboard</PageTitle>
+
+<div class="mb-4">
+    <h1>📚 Library Dashboard</h1>
+    <p class="text-muted">
+        Overview of your library collection and borrowing activity.
+    </p>
+</div>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<div class="row g-4 mb-4">
+    <div class="col-md-3 col-sm-6">
+        <div class="card shadow-sm border-0 p-4 h-100">
+            <div class="text-muted mb-2">Total Book Titles</div>
+            <h2 class="text-primary">@totalBooks</h2>
+            <small>Books in the catalog</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 col-sm-6">
+        <div class="card shadow-sm border-0 p-4 h-100">
+            <div class="text-muted mb-2">Available Copies</div>
+            <h2 class="text-success">@availableCopies</h2>
+            <small>Ready to borrow</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 col-sm-6">
+        <div class="card shadow-sm border-0 p-4 h-100">
+            <div class="text-muted mb-2">Active Loans</div>
+            <h2 class="text-warning">@activeLoans</h2>
+            <small>Currently borrowed</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 col-sm-6">
+        <div class="card shadow-sm border-0 p-4 h-100">
+            <div class="text-muted mb-2">Overdue Loans</div>
+            <h2 class="text-danger">@overdueLoans</h2>
+            <small>Past the due date</small>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="card shadow-sm p-4 h-100">
+            <h4>Recent Borrowing Activity</h4>
+            <p class="text-muted">Latest book loans and returns.</p>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Book</th>
+                            <th>Member</th>
+                            <th>Due Date</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var loan in recentLoans)
+                        {
+                            <tr>
+                                <td>@loan.Book?.Title</td>
+                                <td>@loan.Member?.FullName</td>
+                                <td>@loan.DueDate.ToString("dd.MM.yyyy")</td>
+                                <td>
+                                    @if (loan.IsReturned)
+                                    {
+                                        <span class="badge bg-success">Returned</span>
+                                    }
+                                    else if (loan.IsOverdue)
+                                    {
+                                        <span class="badge bg-danger">Overdue</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-warning text-dark">Borrowed</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (recentLoans.Count == 0)
+            {
+                <p class="text-muted">No borrowing activity yet.</p>
+            }
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card shadow-sm p-4 h-100">
+            <h4>Library Overview</h4>
+
+            <div class="d-flex justify-content-between my-3">
+                <span>Registered Members</span>
+                <strong>@totalMembers</strong>
+            </div>
+
+            <hr />
+
+            <div class="d-flex justify-content-between my-3">
+                <span>Total Copies</span>
+                <strong>@totalCopies</strong>
+            </div>
+
+            <hr />
+
+            <div class="d-flex justify-content-between my-3">
+                <span>Returned Loans</span>
+                <strong>@returnedLoans</strong>
+            </div>
+
+            <hr />
+
+            <h5 class="mt-3">Quick Actions</h5>
+
+            <div class="d-grid gap-2 mt-3">
+                <a href="/books" class="btn btn-primary">
+                    Manage Books
+                </a>
+                <a href="/members" class="btn btn-outline-primary">
+                    Manage Members
+                </a>
+                <a href="/loans" class="btn btn-outline-secondary">
+                    Borrow & Return
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private int totalBooks;
+    private int totalMembers;
+    private int totalCopies;
+    private int availableCopies;
+    private int activeLoans;
+    private int overdueLoans;
+    private int returnedLoans;
+
+    private List<Loan> recentLoans = new();
+    private string error = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            totalBooks = await db.Books.CountAsync();
+            totalMembers = await db.Members.CountAsync();
+
+            totalCopies = await db.Books.SumAsync(b => (int?)b.Quantity) ?? 0;
+
+            availableCopies = await db.Books
+                .SumAsync(b => (int?)b.AvailableQuantity) ?? 0;
+
+            activeLoans = await db.Loans
+                .CountAsync(l => l.ReturnDate == null);
+
+            overdueLoans = await db.Loans
+                .CountAsync(l =>
+                    l.ReturnDate == null &&
+                    l.DueDate < DateTime.Today);
+
+            returnedLoans = await db.Loans
+                .CountAsync(l => l.ReturnDate != null);
+
+            recentLoans = await db.Loans
+                .AsNoTracking()
+                .Include(l => l.Book)
+                .Include(l => l.Member)
+                .OrderByDescending(l => l.BorrowDate)
+                .ThenByDescending(l => l.Id)
+                .Take(5)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"Unable to load dashboard: {ex.Message}";
+        }
+    }
+}
